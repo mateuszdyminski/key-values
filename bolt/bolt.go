@@ -2,44 +2,67 @@ package bolt
 
 import (
 	"fmt"
-	"github.com/boltdb/bolt"
-	"github.com/mateuszdyminski/key-values/models"
 	"log"
+
+	"github.com/boltdb/bolt"
 	"os"
-	"time"
 )
 
-func Insert(insertsNum int) {
-	// init
-	db, err := bolt.Open("my.db", 0600, nil)
+type boltDb struct {
+	path       string
+	bucketName string
+	db         *bolt.DB
+	bucket     *bolt.Bucket
+}
+
+func newDB() *boltDb {
+	return &boltDb{}
+}
+
+func (i *boltDb) setup(path, bucketName string) {
+	i.bucketName = bucketName
+	i.path = path
+
+	var err error
+	i.db, err = bolt.Open(i.path, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() {
-		os.Remove("my.db")
-		db.Close()
-	}()
 
-	msg := models.MakeMsg()
-	msgBytes := msg.Bytes()
+	err = i.db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucket([]byte(i.bucketName))
+		return err
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
-	// when
-	t := time.Now()
-	db.Batch(func(tx *bolt.Tx) error {
-		b, e := tx.CreateBucket([]byte("test"))
-		if e != nil {
-			fmt.Printf("Can't create bucket: %v", e)
-			return e
-		}
+func (i *boltDb) Insert(key []byte, msg []byte) error {
+	return i.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(i.bucketName))
+		return b.Put(key, msg)
+	})
+}
 
-		for i := 0; i < insertsNum; i++ {
-			b.Put(models.MakeID(i).Bytes(), msgBytes)
-		}
+func (i *boltDb) Get(key []byte) ([]byte, error) {
+	var res []byte
+
+	i.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(i.bucketName))
+		res = b.Get(key)
 
 		return nil
 	})
-	elapsed := time.Since(t)
 
-	// Result
-	fmt.Printf("Bolt db inserted %d messages in: %s\n", insertsNum, elapsed)
+	if res == nil {
+		return nil, fmt.Errorf("no such key in db. key: %v", key)
+	}
+
+	return res, nil
+}
+
+func (i *boltDb) close() {
+	i.db.Close()
+	os.Remove(i.path)
 }

@@ -1,43 +1,53 @@
 package rocks
 
 import (
-	"fmt"
+	"github.com/tecbot/gorocksdb"
+	"log"
 	"os"
-	"time"
-
-	"github.com/influxdb/rocksdb"
-	"github.com/mateuszdyminski/key-values/models"
 )
 
-func Insert(insertsNum int) {
-	// initialization
-	msg := models.MakeMsg()
-	msgBytes := msg.Bytes()
+type rocks struct {
+	path string
+	db   *gorocksdb.DB
+	wo   *gorocksdb.WriteOptions
+	ro   *gorocksdb.ReadOptions
+}
 
-	opts := rocksdb.NewOptions()
-	bo := rocksdb.NewBlockBasedOptions()
-	bo.SetCache(rocksdb.NewLRUCache(3 << 30))
-	opts.SetBlockBasedTableFactory(bo)
+func newDB() *rocks {
+	return &rocks{}
+}
+
+func (i *rocks) setup(path string) {
+	i.path = path
+	opts := gorocksdb.NewDefaultOptions()
 	opts.SetCreateIfMissing(true)
-	db, err := rocksdb.Open("/tmp/rocks-test", opts)
+
+	var err error
+	i.db, err = gorocksdb.OpenDb(opts, i.path)
 	if err != nil {
-		panic("can't open db")
+		log.Fatal(err)
 	}
 
-	wo := rocksdb.NewWriteOptions()
+	i.wo = gorocksdb.NewDefaultWriteOptions()
+	i.ro = gorocksdb.NewDefaultReadOptions()
+}
 
-	defer func() {
-		wo.Close()
-		db.Close()
-		os.RemoveAll("/tmp/rocks-test")
-	}()
+func (i *rocks) Insert(key []byte, msg []byte) error {
+	return i.db.Put(i.wo, key, msg)
+}
 
-	// test
-	t := time.Now()
-	for i := 0; i < insertsNum; i++ {
-		db.Put(wo, models.MakeID(i).Bytes(), msgBytes)
+func (i *rocks) Get(key []byte) ([]byte, error) {
+	data, err := i.db.Get(i.ro, key)
+	if err != nil {
+		return nil, err
 	}
 
-	// result
-	fmt.Printf("Rocks db inserted %d messages in: %s \n", insertsNum, time.Since(t))
+	return data.Data(), nil
+}
+
+func (i *rocks) close() {
+	i.wo.Destroy()
+	i.ro.Destroy()
+	i.db.Close()
+	os.RemoveAll(i.path)
 }
